@@ -45,7 +45,7 @@ def leftover_markup(path):
 
 
 def main(keys):
-    tot = dict(docs=0, valid=0, pages=0, first=0, first_tot=0)
+    tot = dict(docs=0, valid=0, pages=0, first=0, first_tot=0, pic=0)
     for key in keys:
         try:
             out, msg = build(key)
@@ -61,6 +61,7 @@ def main(keys):
         if os.path.exists(orig):
             act = Doc(orig, use_stored=True).actual_pages()
             same = sum(1 for a, b in zip(act, est) if norm(a) == norm(b))
+            tot["pic"] += sum(1 for a, b in zip(act, est) if b == "(빈 쪽)" and norm(a) != norm(b))   # 원고가 원본 쪽을 그림으로 넣은 쪽
             tot["pages"] += len(act) == len(est)
             tot["first"] += same
             tot["first_tot"] += len(act)
@@ -72,7 +73,8 @@ def main(keys):
         if lo:
             line += f"  [잔여 마크업 {lo}]"
         print(line, "|", msg.split("|", 1)[-1].strip() if "|" in msg else "")
-    print(f"\n문서 {tot['docs']} · 스키마 통과 {tot['valid']} · 쪽수 일치 {tot['pages']} · 쪽 첫 줄 일치 {tot['first']}/{tot['first_tot']}")
+    print(f"\n문서 {tot['docs']} · 스키마 통과 {tot['valid']} · 쪽수 일치 {tot['pages']} · 쪽 첫 줄 일치 {tot['first']}/{tot['first_tot']}"
+          f" (그림으로 넣은 쪽 {tot['pic']}개 제외 시 {tot['first']}/{tot['first_tot'] - tot['pic']})")
 
 
 if __name__ == "__main__":

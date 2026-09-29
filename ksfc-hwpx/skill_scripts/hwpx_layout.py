@@ -255,7 +255,8 @@ class Doc:
                 for s in p.findall(f"{HP}linesegarray/{HP}lineseg"):
                     v = int(s.get("vertpos"))
                     first_seg = s is p.find(f"{HP}linesegarray/{HP}lineseg")
-                    if last is None or v < last or (first_seg and p.get("pageBreak") == "1"):
+                    # 줄 높이는 0보다 크므로 위치가 같거나 줄면 새 쪽(한 문단의 표 두 개가 각각 쪽 맨 위에 오면 둘 다 0)
+                    if last is None or v <= last or (first_seg and p.get("pageBreak") == "1"):
                         pages.append(None)
                     if pages[-1] is None and text.strip():
                         tp = int(s.get("textpos"))

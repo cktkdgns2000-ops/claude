@@ -448,7 +448,7 @@ function runsWithKeyword(text, f, opts = {}) {
   return [...inline(kw[1], f, opts), new TextRun({ text: " ", ...font(f) }), ...inline(kw[2], f, { ...opts, shrinkParens: CONFIG.fit.shrinkParens })];
 }
 /** 1셀 박스 표 */
-const BOX_PAD_TW = 100;   // 박스 위·아래 안쪽 여백(twips, 약 5pt)
+const BOX_PAD_TW = 28;    // 박스 위·아래 안쪽 여백: 원본 여러 줄 박스 42개 중 41개가 좌우 1.8mm(510 HU)·위아래 0.5mm(141 HU)
 function boxTable(paragraphs, { fill, borderSpec, widthDxa, marginTw = 100, indentMm = 0 } = {}) {
   const w = widthDxa || (CONTENT_W() - Math.round(indentMm * MM));
   return new Table({
@@ -459,7 +459,7 @@ function boxTable(paragraphs, { fill, borderSpec, widthDxa, marginTw = 100, inde
     rows: [new TableRow({ cantSplit: true, children: [new TableCell({
       width: { size: w, type: WidthType.DXA },
       shading: fill ? shade(fill) : undefined,
-      margins: { top: BOX_PAD_TW, bottom: BOX_PAD_TW, left: 140, right: 140 },   // 위·아래 여백 같게(약 5pt)
+      margins: { top: BOX_PAD_TW, bottom: BOX_PAD_TW, left: 102, right: 102 },   // 한컴 기본 셀 여백(1.8mm·0.5mm)
       children: paragraphs,
     })] })],
   });
@@ -808,6 +808,12 @@ function mdTable(rows, fontSize, { inBox = false, kv = false, headerRows = 1, fi
   }));
   // 최소 폭: 열에서 가장 긴 '끊을 수 없는 토큰'(공백 기준, 12자 한도) — 숫자·짧은 라벨 열이 지나치게 좁아지는 것 방지
   const mins = Array.from({ length: ncol }, (_, i) => Math.max(3, ...cellTexts(i).flatMap(x => x.split(/<br>|\s+/)).map(tok => Math.min(12, estWidthPt(tok, 10) / 10))));
+  // 세로쓰기 라벨 열(연<br>구<br>기<br>관처럼 줄마다 한 글자): 한 글자 폭만(원본 9.7mm), 균등 몫도 주지 않음
+  const vertical = Array.from({ length: ncol }, (_, i) => {
+    const cs = raw.slice(headerRows).map(r => r[i]).filter(t => t && t !== "<" && t !== "^");
+    return cs.length > 0 && cs.every(t => plain(t).split("<br>").every(y => [...y.trim()].length <= 1)) && cs.some(t => t.includes("<br>"));
+  });
+  vertical.forEach((v, i) => { if (v) { mins[i] = 1.1; lens[i] = 1.1; } });
   const total = Math.round(CONTENT_W() - (inBox ? 300 : 0) - indentMm * MM);
   const fs = (fontSize || CONFIG.fonts.table.size);
   const minW = mins.map(m => Math.round(m * fs * 20 + 230));       // 글자폭(em→pt→twips) + 셀 여백(hwpx: 좌우 1.8mm)
@@ -820,7 +826,8 @@ function mdTable(rows, fontSize, { inBox = false, kv = false, headerRows = 1, fi
     // 남는 폭의 15%는 모든 열에 균등, 85%는 내용 길이 초과분 비례 → 긴 열이 전부 흡수하지 않게(원본 표의 숫자 열 여유)
     const extra = lens.map((l, i) => Math.max(0, Math.min(l, 40) - mins[i]));
     const esum = extra.reduce((a, b) => a + b, 0) || 1;
-    widths = minW.map((w, i) => w + Math.round(rest * 0.15 / ncol) + Math.round(rest * 0.85 * extra[i] / esum));
+    const nshare = vertical.filter(v => !v).length || 1;
+    widths = minW.map((w, i) => w + (vertical[i] ? 0 : Math.round(rest * 0.15 / nshare)) + Math.round(rest * 0.85 * extra[i] / esum));
   }
   if (equal) { const w0 = Math.floor(total / ncol); widths = Array(ncol).fill(w0); }
   widths[widths.length - 1] += total - widths.reduce((a, b) => a + b, 0);
