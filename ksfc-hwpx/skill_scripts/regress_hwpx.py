@@ -16,7 +16,60 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 from hwpx_layout import Doc, norm  # noqa: E402
 
-KEYS = re.findall(r'\("([^"]+)","[^"]+",\d+\)', open(os.path.join(HERE, "regress.py"), encoding="utf-8").read())
+KEYS = [
+    "2510_consortium",
+    "2506_fsc_kdac",
+    "2409_sto_trend",
+    "2603_advisory_4th",
+    "2604_fsc_investor_protection",
+    "2607_mirae_collab",
+    "2601_poc_explainer",
+    "2605_prof_meeting",
+    "2505_kdac_review",
+    "kdx/2509_kdx_new_license_trend",
+    "kdx/2510_kdx_investment_schedule",
+    "kdx/2511_kdx_application_result",
+    "kdx/2601_kdx_selection_result",
+    "kdx/2602_kdx_briefing",
+    "kdx/2603_kdx_sha_amendment",
+    "kdx/2604_kdx_sha_further_amendment",
+    "kdx/2607_kdx_rights_issue_issue",
+    "kdx/2609_kdx_progress",
+    "adv/2503_adv_operation_plan",
+    "adv/2505_adv_formation_1st",
+    "adv/2507_adv_2nd_plan",
+    "adv/2511_adv_3rd",
+    "adv/2607_adv_reorganization",
+    "rsch/2504_rsch_proposal_prof",
+    "rsch/2603_rsch_overview_prof",
+    "rsch/2604_rsch_overview_internal",
+    "rsch/2605_rsch_plan_internal",
+    "rsch/2609_rsch_feedback_prof",
+    "rsch/2609_rsch_progress_internal",
+    "kscc/2410_kscc_mou_plan",
+    "kscc/2507_kscc_joint_research_fsc",
+    "kscc/2512_kscc_briefing_plan",
+    "kscc/2512_kscc_progress_demo",
+    "kscc/2609_kscc_poc_plan",
+    "kdac/2504_kdac_meeting_result",
+    "kdac/2509_kdac_trend_plan",
+    "trend/2504_trend_custody_banks",
+    "trend/2505_trend_sc_kscc_proposal",
+    "trend/2506_trend_sc_legislation",
+    "trend/2601_trend_vasp_phase2",
+    "trend/2609_trend_sto_policy",
+    "trend/2603_trend_sc_status",
+    "trend/2608_trend_partnerships",
+    "canton/2608_canton_sv_review",
+    "canton/2609_canton_coop_plan",
+    "equity/2606_equity_planning_review",
+    "equity/2606_equity_feasibility",
+    "misc/2603_misc_kofia_sc_proposal",
+    "misc/2603_misc_council_plan",
+    "misc/2604_misc_mirae_nda",
+    "misc/2604_misc_council_result",
+]   # assets/examples/<키>.md — 원본 재현 시험지 51건
+
 ORIG = os.environ.get("ORIG_HWPX", os.path.join(ROOT, "orig_hwpx"))
 OUT = os.environ.get("REGRESS_OUT", "/tmp/regress_hwpx")
 
@@ -32,7 +85,10 @@ def build(key):
 
 
 def validate(path):
+    """python-hwpx 스키마 검증. 통과 True, 실패 False, python-hwpx가 없으면 None"""
     r = subprocess.run([sys.executable, "-m", "hwpx.tools.validator", path], capture_output=True, text=True)
+    if r.returncode != 0 and ("ModuleNotFoundError" in r.stderr or "ImportError" in r.stderr or "No module named" in r.stderr):
+        return None
     return "All schema validations passed" in r.stdout
 
 
@@ -54,10 +110,10 @@ def main(keys):
             continue
         ok = validate(out)
         est = Doc(out).paginate()
-        line = f"{key:40s} {'✓' if ok else '✗스키마'} {len(est)}쪽"
+        line = f"{key:40s} {'✓' if ok else ('-' if ok is None else '✗스키마')} {len(est)}쪽"
         orig = os.path.join(ORIG, key + ".hwpx")
         tot["docs"] += 1
-        tot["valid"] += ok
+        tot["valid"] += bool(ok)
         if os.path.exists(orig):
             act = Doc(orig, use_stored=True).actual_pages()
             same = sum(1 for a, b in zip(act, est) if norm(a) == norm(b))

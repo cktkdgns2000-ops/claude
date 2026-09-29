@@ -970,6 +970,10 @@ class Writer:
 
 
 def skeleton():
+    """빈 hwpx 뼈대: skill의 assets/hwpx/Skeleton.hwpx(python-hwpx, Apache-2.0), 없으면 설치된 python-hwpx"""
+    here = Path(__file__).resolve().parent.parent / "assets" / "hwpx" / "Skeleton.hwpx"
+    if here.exists():
+        return zipfile.ZipFile(here).read
     import hwpx
     z = zipfile.ZipFile(Path(hwpx.__file__).parent / "data" / "Skeleton.hwpx")
     return z.read

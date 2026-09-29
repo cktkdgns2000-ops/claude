@@ -77,9 +77,38 @@ NO_START = set(")]}’”,.:;!?、。」』〉》%")   # 가운뎃점(ㆍ·)은 
 NO_END = set("([{‘“「『〈《")
 
 
+class _Table(dict):
+    """font_metrics.json의 한 글꼴: 글자 코드 → (전진폭, 0). cmap 자리에는 같은 표(코드 → 코드)를 씀"""
+    def get(self, k, d=None):
+        return k if dict.__contains__(self, k) else d
+
+
+@lru_cache(None)
+def _metrics_file():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "font_metrics.json")
+    try:
+        import json
+        return json.load(open(path, encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 @lru_cache(None)
 def _font(face, bold):
-    from fontTools.ttLib import TTFont
+    """(cmap, 전진폭, unitsPerEm). 먼저 skill에 들어 있는 글자 폭 표(font_metrics.json — 나눔명조·나눔고딕 보통/굵게,
+    HY 미리보기 폭)를 쓰고, 없을 때만 설치된 글꼴 파일을 읽는다(어느 환경에서나 같은 결과가 나오게)."""
+    m = _metrics_file()
+    ent = m.get(f"{face}|{int(bool(bold))}") or m.get(f"{face}|0")
+    if ent:
+        tbl = _Table()
+        for a, b, w in ent["runs"]:
+            for cp in range(a, b + 1):
+                dict.__setitem__(tbl, cp, (w, 0))
+        return tbl, tbl, ent["upm"]
+    try:
+        from fontTools.ttLib import TTFont
+    except ImportError:
+        return None
     path = FONT_FILES.get((face, bold)) or FONT_FILES.get((face, False))
     if not path:
         try:
