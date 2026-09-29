@@ -297,13 +297,21 @@ def _lo(p):
     return min(0, MAX_TIGHT - min(0, min(sps))) if sps else 0
 
 
+def _char_stable(p, d):
+    """글자 단위 줄 나눔이 줄 폭 ±1%(FIT_MARGIN)에서도 같은 자연스러운 자리에서만 끊기는지.
+    한글이 계산보다 한 글자 더 넣으면(9차 저장본 `ㆍ|자금세탁` → `자|금세탁`) 어절 중간 끊김이 되므로 양쪽 모두 확인."""
+    s0 = _loosest(p, d, "char")[1]
+    return (_awkward_splits(p, s0) == 0 and s0 == _loosest(p, d, "char", FIT_MARGIN)[1]
+            and s0 == _loosest(p, d, "char", -FIT_MARGIN)[1])
+
+
 def _finalize(p):
     """내어쓰기까지 정한 최종 상태 점검: 글자 단위가 어절 중간(자연스러운 경계 아님)에서 끊기면 어절 단위로 되돌리고,
     줄 폭 여유가 부족하면 자간을 한 단계씩 더 줄임(-10% 한도). 자간을 줄이면 내어쓰기도 작아지므로 수렴."""
     lo = _lo(p)
     for _ in range(12):
         mode = "char" if p.ps.charwrap else "word"
-        if p.ps.charwrap and _awkward_splits(p, _loosest(p, p.delta, "char")[1]):
+        if p.ps.charwrap and not _char_stable(p, p.delta):
             p.ps.charwrap = False
             apply_quick_indent(p)
             continue
@@ -344,7 +352,7 @@ def fit(p, stats):
             for d in sorted(range(lo, 1), key=abs):
                 w2, s2, _ = _loosest(p, d, "char", FIT_MARGIN)
                 # 여유를 둔 폭과 실제 폭에서 같은 자리로 끊길 때만(폭 오차로 끊김 자리가 어절 중간으로 밀리지 않게)
-                if (_awkward_splits(p, s2) == 0 and len(s2) > 1 and s2 == _loosest(p, d, "char")[1]
+                if (_awkward_splits(p, s2) == 0 and len(s2) > 1 and _char_stable(p, d)
                         and s2 != _loosest(p, d, "word", FIT_MARGIN)[1]):
                     p.ps.charwrap, p.delta = True, d
                     stats["charwrap"] += 1
