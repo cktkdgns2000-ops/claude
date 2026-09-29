@@ -294,13 +294,18 @@ def _awkward_splits(p, starts):
 def fit(p, stats):
     """어절 단위가 원칙(작성자 결정). 띄어쓰기가 0.5em 넘게 벌어지는 줄이 생기면 자간(-10% 한도)으로 다음 어절을 끌어올리고,
     그래도 안 되면 자연스러운 경계에서만 글자 단위로 나눔(없으면 어절 단위 유지). 끌어올릴 때는 줄 폭 1% 여유를 남김."""
-    if p.ps.align != "JUSTIFY" or not p.text().strip() or any(cs == "obj" for cs, _ in p.runs) or "\t" in p.text():
+    if not p.text().strip() or any(cs == "obj" for cs, _ in p.runs) or "\t" in p.text():
         return
     base_sp = min(cs.spacing for cs, t in p.runs if cs != "obj" and t.strip())
     lo = min(0, MAX_TIGHT - min(0, base_sp))   # 자간 합계가 -10%를 넘지 않게(직접 지정한 {tight}는 존중)
     p.delta, p.ps.charwrap = 0, False
+    if p.ps.align != "JUSTIFY":                  # 가운데·왼쪽 정렬(표 칸 등)은 넘침 여유만 확보
+        if "\n" not in p.text():
+            _settle(p, lo)
+        return
     worst, starts, used = _loosest(p, 0, "word")
     if len(starts) < 2:
+        _settle(p, lo)
         return
     if worst > LOOSE_EM:
         best = None
@@ -335,12 +340,18 @@ def fit(p, stats):
                 p.delta = d
                 stats["pullup"] += 1
                 break
-    # 자간으로 맞춘 결과가 여유 없이 딱 맞으면(폭 오차로 넘칠 위험) 여유가 생기는 쪽으로 한 단계 더
-    if p.delta:
+    _settle(p, lo)
+
+
+def _settle(p, lo):
+    """줄이 여유 없이 딱 맞으면(줄 폭 99% 넘게 채움) 한글에서는 끝 어절이 넘어가기도 함(4차 한글 저장본 416문단 중 1건,
+    99.9%) → 1% 여유를 두어도 줄 나눔이 같아질 때까지 자간을 한 단계씩 줄임(-10% 한도). 자간을 따로 조정하지 않은 문단도 포함."""
+    while p.delta - 1 >= lo:
         _, s_m, _ = _loosest(p, p.delta, "word", FIT_MARGIN)
         _, s_0, _ = _loosest(p, p.delta, "word")
-        if s_m != s_0 and p.delta - 1 >= lo:
-            p.delta -= 1
+        if s_m == s_0:
+            break
+        p.delta -= 1
 
 
 def fit_single_lines(p, stats):
@@ -756,7 +767,11 @@ class Writer:
     # ── 블록 ──
     def blocks(self, children, width, clean=True):
         out = []
+        children = self.gap_after_header(children, width)
         for c in children:
+            if c.get("_gap"):
+                out.append(self.spacer(c["_gap"], width, True))
+                continue
             if c["type"] == "p" and c.get("_band"):
                 out += self.band_para(c, width)
             elif c["type"] == "p":
@@ -783,6 +798,42 @@ class Writer:
                 apply_quick_indent(p)
         self.stats["paras"] += len(out)
         return out
+
+    @staticmethod
+    def gap_after_header(children, width):
+        """번호 머리글(Ⅴ 향후 일정) 바로 뒤에 표·박스가 오면 한 줄 띄움.
+        원본 51건: 머리글 뒤 42곳 중 41곳이 빈 줄(표 앞이면 표 글자 크기의 빈 줄, 160%)."""
+        out = list(children)
+        for i, c in enumerate(children):
+            if c.get("type") != "tbl" or not c.get("_hdr"):
+                continue
+            j = i + 1
+            while j < len(children) and children[j].get("_spacer"):
+                j += 1
+            if j >= len(children) or children[j].get("type") != "tbl":
+                continue
+            sizes = []
+            def scan(o):
+                if isinstance(o, dict):
+                    if o.get("type") == "r" and o.get("size") and (o.get("text") or "").strip():
+                        sizes.append(o["size"] / 2)
+                    for v in o.values():
+                        scan(v)
+                elif isinstance(o, list):
+                    for v in o:
+                        scan(v)
+            rows = children[j].get("rows") or []
+            scan(rows[1:] or rows)
+            fs = min(15, max(10, sizes[0] if sizes else 13))
+            for k in range(i + 1, j):
+                out[k] = None
+            out[i] = [c, {"type": "p", "_gap": fs * 1.6}]
+        flat = []
+        for c in out:
+            if c is None:
+                continue
+            flat += c if isinstance(c, list) else [c]
+        return flat
 
     def para_xml(self, p, extra=""):
         self.pid += 1
@@ -846,7 +897,7 @@ class Writer:
     def build(self):
         sec = self.ir["sections"][0]
         paras = []
-        for c in sec.get("children") or []:
+        for c in self.gap_after_header(sec.get("children") or [], BODY_W):
             if c.get("pageBreakBefore") and paras:
                 self.block += 1
             paras += self.blocks([c], BODY_W, clean=False)

@@ -585,7 +585,7 @@ function boxedNumberHeader(num, text) {
   const cell = (width, children, opts) => new TableCell({ width: { size: width, type: WidthType.DXA }, verticalAlign: VerticalAlign.CENTER,
     borders: opts.borders, shading: opts.fill ? shade(opts.fill) : undefined, margins: { top: 0, bottom: 0, left: opts.pad ?? 0, right: 0 }, children });
   return [spacer(CONFIG.spacing.header - 2), new Table({
-    width: { size: lineW, type: WidthType.DXA }, columnWidths: [c1, gap, c3], layout: TableLayoutType.FIXED, borders: allBorders(noBorder),
+    _hdr: true, width: { size: lineW, type: WidthType.DXA }, columnWidths: [c1, gap, c3], layout: TableLayoutType.FIXED, borders: allBorders(noBorder),
     rows: [new TableRow({ cantSplit: true, height: { value: Math.round(24 * 20), rule: "exact" }, children: [
       cell(c1, [para([new TextRun({ text: num, ...font(hf), bold: true, color: "FFFFFF" })], AlignmentType.CENTER)], { fill: CONFIG.colors.romanFill, borders: allBorders(noBorder) }),
       cell(gap, [para([], AlignmentType.LEFT)], { borders: bottom }),
