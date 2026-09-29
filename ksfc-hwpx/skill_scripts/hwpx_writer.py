@@ -241,6 +241,7 @@ class PS:
 class Para:
     def __init__(self, ps, runs, width, page_break=False, hints=()):
         self.ps, self.runs, self.width, self.page_break = ps, runs, width, page_break   # runs: [[CS, text]] 또는 ("obj", xml)
+        self.prefix = None        # (글자 모양, 앞 공백+기호+공백, 앞 공백 수) — 빠른 내어쓰기 계산용
         self.hints = set(hints)   # 자연스러운 분리 위치(글자 번호 앞) — build_hwpx.js의 U+200B 자리
         self.delta = 0            # 문단 자간 보정(%)
 
@@ -373,13 +374,28 @@ WIDE_MARK_EM = 1.04   # 한글이 전각 기호(□ ㅇ ➊ ① ※ ◈ ■ ▶ 
 
 def prefix_width(cs, prefix):
     """앞 공백 + 기호 + 공백의 폭(= 내어쓰기, 한글에서 Shift+Tab으로 잡는 위치)."""
-    tot = 0.0
-    for c in prefix:
-        if c != " " and HM._wide(c):
-            tot += WIDE_MARK_EM * cs.pt * 100 * cs.ratio / 100 * (1 + cs.spacing / 100)
-        else:
-            tot += cs.adv(c)
-    return round(tot)
+    return round(sum(cs.adv(c) for c in prefix))
+
+
+def apply_quick_indent(p):
+    """빠른 내어쓰기(Shift+Tab)와 같은 위치: 기호 뒤 커서의 실제 x.
+    첫 줄이 양쪽 정렬로 늘어나면 기호 뒤 공백도 그만큼 늘어남(앞 공백은 안 늘어남) — 한글 보정 912문단 검증."""
+    if not getattr(p, "prefix", None):
+        return
+    cs0, prefix, nlead = p.prefix
+    base = sum(cs0.adv(c, p.delta) for c in prefix)
+    extra = 0.0
+    if p.ps.align == "JUSTIFY":
+        fw, rw = p.widths()
+        starts, used, gaps = HM.layout(p.chars(), fw, rw, "char" if p.ps.charwrap else "word")
+        if len(starts) > 1:
+            t = p.text()
+            line = t[:starts[1]].rstrip(" ")
+            ngap = line.count(" ") - nlead
+            n_after = prefix.count(" ") - nlead
+            if ngap > 0:
+                extra = (fw - used[0]) / ngap * n_after
+    p.ps.intent = -round(base + extra)
 
 MARKER_RE = re.compile(r"^([□ㅇ\-·∙•■▪‣▶◆◈◇○●◎▷►※➡⇨⇒☞]|\*\*|\*|\d\)|[➊-➓①-⑳❶-❿])$")
 
@@ -500,6 +516,7 @@ class Writer:
                 keep_lines=bool(p.get("keepLines")))
 
         # 기호 뒤 탭 + 내어쓰기 → 앞 공백 + 기호 + 공백 + 내어쓰기(원본 방식)
+        quick = None
         start_tw = left - hanging
         first = runs[0] if runs else None
         if first and first[0] != "obj" and "\t" in first[1] and hanging > 0 and first[1].index("\t") <= 3:
@@ -511,6 +528,7 @@ class Writer:
             prefix = " " * nsp + mk + " "
             ps.left = 0
             ps.intent = -prefix_width(cs0, prefix)
+            quick = (cs0, prefix, nsp)
         elif hanging > 0:
             # 탭 없는 내어쓰기(표 셀 목록 등): 첫 글자 기호 + 공백까지를 내어쓰기로
             txt = "".join(t for cs, t in runs if cs != "obj")
@@ -523,6 +541,8 @@ class Writer:
             ps.left = 0
             prefix = " " * nsp + (m.group(1) if m else "")
             ps.intent = -prefix_width(cs0, prefix) if m else -hanging * TW
+            if m:
+                quick = (cs0, prefix, len(prefix) - len(prefix.lstrip(" ")))
         else:
             ps.left = max(0, left) * TW
             ps.intent = (ind.get("firstLine") or 0) * TW
@@ -544,6 +564,7 @@ class Writer:
             ps.border = self.st.border_fill(sides, fill)
 
         para = Para(ps, runs, width, page_break, hints)
+        para.prefix = quick
         out.append(para)
         if after >= 1:
             out.append(self.spacer(after, width, keep_next, False, face0))
@@ -747,6 +768,10 @@ class Writer:
             out = cleaned
         for p in out:
             fit(p, self.stats)
+            if getattr(p, "prefix", None):
+                apply_quick_indent(p)
+                fit(p, self.stats)          # 내어쓰기가 바뀌어 줄이 달라졌을 수 있음
+                apply_quick_indent(p)
         self.stats["paras"] += len(out)
         return out
 
