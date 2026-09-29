@@ -264,7 +264,7 @@ class Para:
 
 
 # ───────────────────────── 줄 맞춤(작성자 결정 규칙) ─────────────────────────
-FIT_MARGIN = 0.01            # 자간으로 끌어올릴 때 남기는 줄 폭 여유(1%) — 폭 추정 오차로 마지막 어절이 다시 넘어가지 않게
+FIT_MARGIN = 0.01            # 줄 폭 여유(1%): 51건 한글 저장본 1,227개 줄 나눔 중 이 여유로 부족했던 곳 1건(98.5%) — 폭 추정 오차로 마지막 어절이 다시 넘어가지 않게
 
 
 def _loosest(p, delta, mode, margin=0.0):
@@ -291,9 +291,31 @@ def _awkward_splits(p, starts):
     return bad
 
 
+def _lo(p):
+    """자간 합계 -10% 한도(직접 지정한 {tight}가 더 크면 그 값)에서 이 문단이 더 줄일 수 있는 최소 보정값"""
+    sps = [cs.spacing for cs, t in p.runs if cs != "obj" and t.strip()]
+    return min(0, MAX_TIGHT - min(0, min(sps))) if sps else 0
+
+
+def _finalize(p):
+    """내어쓰기까지 정한 최종 상태 점검: 글자 단위가 어절 중간(자연스러운 경계 아님)에서 끊기면 어절 단위로 되돌리고,
+    줄 폭 여유가 부족하면 자간을 한 단계씩 더 줄임(-10% 한도). 자간을 줄이면 내어쓰기도 작아지므로 수렴."""
+    lo = _lo(p)
+    for _ in range(12):
+        mode = "char" if p.ps.charwrap else "word"
+        if p.ps.charwrap and _awkward_splits(p, _loosest(p, p.delta, "char")[1]):
+            p.ps.charwrap = False
+            apply_quick_indent(p)
+            continue
+        if _loosest(p, p.delta, mode, FIT_MARGIN)[1] == _loosest(p, p.delta, mode)[1] or p.delta - 1 < lo:
+            break
+        p.delta -= 1
+        apply_quick_indent(p)
+
+
 def fit(p, stats):
     """어절 단위가 원칙(작성자 결정). 띄어쓰기가 0.5em 넘게 벌어지는 줄이 생기면 자간(-10% 한도)으로 다음 어절을 끌어올리고,
-    그래도 안 되면 자연스러운 경계에서만 글자 단위로 나눔(없으면 어절 단위 유지). 끌어올릴 때는 줄 폭 1% 여유를 남김."""
+    그래도 안 되면 자연스러운 경계에서만 글자 단위로 나눔(없으면 어절 단위 유지). 끌어올릴 때는 줄 폭 1% 여유(FIT_MARGIN)를 남김."""
     if not p.text().strip() or any(cs == "obj" for cs, _ in p.runs) or "\t" in p.text():
         return
     base_sp = min(cs.spacing for cs, t in p.runs if cs != "obj" and t.strip())
@@ -321,7 +343,9 @@ def fit(p, stats):
             # 자연스러운 경계에서만 글자 단위 허용
             for d in sorted(range(lo, 1), key=abs):
                 w2, s2, _ = _loosest(p, d, "char", FIT_MARGIN)
-                if _awkward_splits(p, s2) == 0 and len(s2) > 1 and s2 != _loosest(p, d, "word", FIT_MARGIN)[1]:
+                # 여유를 둔 폭과 실제 폭에서 같은 자리로 끊길 때만(폭 오차로 끊김 자리가 어절 중간으로 밀리지 않게)
+                if (_awkward_splits(p, s2) == 0 and len(s2) > 1 and s2 == _loosest(p, d, "char")[1]
+                        and s2 != _loosest(p, d, "word", FIT_MARGIN)[1]):
                     p.ps.charwrap, p.delta = True, d
                     stats["charwrap"] += 1
                     return
@@ -345,7 +369,7 @@ def fit(p, stats):
 
 def _settle(p, lo):
     """줄이 여유 없이 딱 맞으면(줄 폭 99% 넘게 채움) 한글에서는 끝 어절이 넘어가기도 함(4차 한글 저장본 416문단 중 1건,
-    99.9%) → 1% 여유를 두어도 줄 나눔이 같아질 때까지 자간을 한 단계씩 줄임(-10% 한도). 자간을 따로 조정하지 않은 문단도 포함."""
+    99.9%) → 여유(FIT_MARGIN)를 두어도 줄 나눔이 같아질 때까지 자간을 한 단계씩 줄임(-10% 한도). 자간을 따로 조정하지 않은 문단도 포함."""
     while p.delta - 1 >= lo:
         _, s_m, _ = _loosest(p, p.delta, "word", FIT_MARGIN)
         _, s_0, _ = _loosest(p, p.delta, "word")
@@ -543,8 +567,10 @@ class Writer:
             mk = first[1][:first[1].index("\t")].strip()
             cs0 = first[0]
             nsp = max(0, round(start_tw / 20 / (0.5 * cs0.pt)))
-            first[1] = " " * nsp + mk + " " + first[1][first[1].index("\t") + 1:]
-            hints = [h + nsp + 1 for h in hints]
+            tab_at = first[1].index("\t")
+            first[1] = " " * nsp + mk + " " + first[1][tab_at + 1:]
+            # 탭까지(tab_at + 1글자)가 앞 공백 + 기호 + 공백(nsp + len(mk) + 1글자)으로 바뀐 만큼 힌트 위치 이동
+            hints = [h + nsp + len(mk) - tab_at for h in hints]
             prefix = " " * nsp + mk + " "
             ps.left = 0
             ps.intent = -prefix_width(cs0, prefix)
@@ -793,9 +819,17 @@ class Writer:
         for p in out:
             fit(p, self.stats)
             if getattr(p, "prefix", None):
+                # 내어쓰기는 첫 줄 양쪽 정렬 늘어남에 따라 달라지고, 내어쓰기가 바뀌면 줄 맞춤도 달라짐 → 둘 다 바뀌지 않을 때까지
+                for _ in range(4):
+                    before = (p.delta, p.ps.intent, p.ps.charwrap)
+                    apply_quick_indent(p)
+                    fit(p, self.stats)
+                    if (p.delta, p.ps.intent, p.ps.charwrap) == before:
+                        break
                 apply_quick_indent(p)
-                fit(p, self.stats)          # 내어쓰기가 바뀌어 줄이 달라졌을 수 있음
-                apply_quick_indent(p)
+                # 두 상태를 오가다 끝나면 자간과 내어쓰기가 어긋날 수 있음 → 최종 내어쓰기에서 여유 확인, 부족하면 자간 한 단계씩
+                # (자간을 줄이면 첫 줄 늘어남이 줄어 내어쓰기도 작아지므로 수렴)
+                _finalize(p)
         self.stats["paras"] += len(out)
         return out
 

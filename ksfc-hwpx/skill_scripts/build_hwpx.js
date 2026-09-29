@@ -253,7 +253,8 @@ function tailFitsInline(main, tail, baseFont, availPt) {
 function tailRuns(tail, baseFont, inlineTail = false) {
   if (!tail) return [];
   const tf = { ...CONFIG.fonts.note, size: baseFont.size - 2 };
-  return [new TextRun({ text: inlineTail ? " " : "\t", ...font(tf) }), ...inline(tail, tf, { shrinkParens: 0 })];
+  // hwpx: 첨언은 항상 띄어쓰기로 이어 씀(원본 11곳 중 10곳, 탭으로 오른쪽 끝에 떼는 곳 없음 — 한글은 탭 뒤가 넘치면 ※만 윗줄에 남김)
+  return [new TextRun({ text: " ", ...font(tf) }), ...inline(tail, tf, { shrinkParens: 0 })];
 }
 /** 넘침 보정: 자간(characterSpacing, twips) 또는 장평(scale, %)을 돌려준다.
  *  - 마지막 줄이 조금 넘칠 때: 글자당 필요 축소가 maxTightPt 이내면 자간 축소
@@ -418,10 +419,9 @@ function bodyParagraph(line, ctx = {}) {
   }
   runs.push(...inline(rest, baseFont, { bold, shrinkParens: shrink, ...cs }));
 
-  const tailInline = autoTail && tailFitsInline((kwText || "") + rest, rightTail, baseFont, availPt);
   if (rightTail) {
     const tailFont = { ...CONFIG.fonts.note, size: baseFont.size - 2 };
-    runs.push(new TextRun({ text: tailInline ? " " : "\t", ...font(tailFont) }));
+    runs.push(new TextRun({ text: " ", ...font(tailFont) }));   // hwpx: 첨언은 띄어쓰기로 이어 씀(tailRuns 참고)
     runs.push(...inline(rightTail, tailFont, { shrinkParens: 0 }));
   }
   let before = marker === "□" ? CONFIG.spacing.group : (isNote ? CONFIG.spacing.note : CONFIG.spacing.inner);
@@ -432,7 +432,6 @@ function bodyParagraph(line, ctx = {}) {
     ...pb(), children: runs, keepLines: true,
     _cls: isNote ? (ctx.afterTable ? "tnote" : "note") : (inBox ? "box" : "body"), _marker: marker || null, _level: ctx.level || 0, _glued: glued,
     alignment: JUSTIFY,   // 양쪽 정렬: HWP 원본과 같이 줄 끝을 오른쪽 여백에 맞춤(Word 기준)
-    ...(rightTail && !tailInline ? { tabStops: [{ type: "right", position: Math.round(CONTENT_W() - (inBox ? 300 : 0)) }] } : {}),
     indent: { left: Math.round(left * MM + hang * MM), hanging: Math.round(hang * MM) },
     // 박스 안 문단 간격(원본 실측): □ 항목 사이 약 12pt, ①·■·ㅇ·➊ 등 항목 사이 약 10pt(항목 간 줄 간격 26.9~27.5pt − 줄 17pt),
     // ‣·▶ 한 줄 나열은 촘촘하게(2409: 18.6pt 간격), 각주·첨언은 4pt
