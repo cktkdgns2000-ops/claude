@@ -220,6 +220,12 @@ class CS:
         a = HM.advance(ch, self.face, self.bold, self.pt, self.ratio, sp)
         return a * 0.6 if self.sup else a
 
+    def marker_adv(self, ch, extra=0):
+        """내어쓰기 계산용(기호는 빠른 내어쓰기 보정값)"""
+        sp = max(-50, min(50, self.spacing + extra))
+        a = HM.marker_em(self.face, self.bold, ch) * self.pt * 100 * self.ratio / 100 * (1 + sp / 100)
+        return a * 0.6 if self.sup else a
+
 
 class PS:
     """문단 모양"""
@@ -426,7 +432,7 @@ WIDE_MARK_EM = 1.04   # 한글이 전각 기호(□ ㅇ ➊ ① ※ ◈ ■ ▶ 
 
 def prefix_width(cs, prefix):
     """앞 공백 + 기호 + 공백의 폭(= 내어쓰기, 한글에서 Shift+Tab으로 잡는 위치)."""
-    return round(sum(cs.adv(c) for c in prefix))
+    return round(sum(cs.marker_adv(c) for c in prefix))
 
 
 def apply_quick_indent(p):
@@ -435,7 +441,7 @@ def apply_quick_indent(p):
     if not getattr(p, "prefix", None):
         return
     cs0, prefix, nlead = p.prefix
-    base = sum(cs0.adv(c, p.delta) for c in prefix)
+    base = sum(cs0.marker_adv(c, p.delta) for c in prefix)
     extra = 0.0
     if p.ps.align == "JUSTIFY":
         fw, rw = p.widths()
