@@ -71,6 +71,8 @@ MARKER_EM = {
     ("나눔명조", "ㅇ"): 0.935,
 }
 
+HY_NONHANGUL = 1.1
+
 NO_START = set(")]}’”,.:;!?ㆍ·、。」』〉》%")
 NO_END = set("([{‘“「『〈《")
 
@@ -109,7 +111,12 @@ def em(face, bold, ch):
         cmap, hm, upm = f
         g = cmap.get(ord(ch))
         if g is not None:
-            return hm[g][0] / upm
+            w = hm[g][0] / upm
+            # HY 글꼴(미리보기 파일 폭)의 한글 음절 외 글자는 한글에서 약 10% 넓게 그려짐:
+            # 한글 저장본 4·5·6차 12건에서 HY 영문·숫자·기호가 든 줄 90개의 줄 나눔이 1.1배일 때 전부 일치(1.0배 2건, 1.15배 1건 어긋남)
+            if face.startswith("HY") and not ("가" <= ch <= "힣"):
+                w *= HY_NONHANGUL
+            return w
     return 1.0 if _wide(ch) else 0.55
 
 
