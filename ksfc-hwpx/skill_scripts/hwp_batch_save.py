@@ -5,10 +5,11 @@
 
 사용법:
     1) (처음 한 번) 명령 프롬프트에서:  pip install pywin32
-    2) 받은 zip을 아래 FOLDER에 풀고, 이 파일을 더블클릭하거나:  python hwp_batch_save.py
-       → FOLDER 안의 *.hwpx를 하나씩 열어 FOLDER\\한글저장\\ 에 같은 이름으로 저장한다.
+    2) 받은 zip을 아무 폴더에나 풀고, 그 안의 이 파일을 더블클릭(또는 python hwp_batch_save.py)
+       → 이 파일이 있는 폴더의 *.hwpx를 하나씩 열어 같은 폴더의 '한글저장' 폴더에 같은 이름으로 저장한다.
+         (이전에 만든 '한글저장' 폴더가 있어도 같은 이름 파일은 덮어쓴다)
     3) '한글저장' 폴더를 zip으로 묶어 올려주면 된다.
-    다른 폴더를 쓰려면:  python hwp_batch_save.py <폴더 경로>
+    다른 폴더를 처리하려면:  python hwp_batch_save.py <폴더 경로>
 
 처음 실행 시 한글이 파일 접근 허용 여부를 물으면 '모두 허용'을 누른다.
 """
@@ -18,7 +19,8 @@ import sys
 import time
 import zipfile
 
-FOLDER = r"C:\Users\ksfc\Desktop\다운로드\일괄저장"
+# 기본 폴더 = 이 파일이 있는 폴더(더블클릭해도, 어느 폴더에 풀어도 동작)
+FOLDER = os.path.dirname(os.path.abspath(__file__))
 
 
 def has_layout(path):
@@ -47,8 +49,7 @@ def main(folder):
     folder = os.path.abspath(folder)
     out_dir = os.path.join(folder, "한글저장")
     os.makedirs(out_dir, exist_ok=True)
-    files = sorted(f for f in glob.glob(os.path.join(folder, "**", "*.hwpx"), recursive=True)
-                   if os.path.dirname(os.path.abspath(f)) != out_dir)
+    files = sorted(glob.glob(os.path.join(folder, "*.hwpx")))   # 이 폴더에 바로 있는 파일만(하위 폴더·'한글저장'은 제외)
     if not files:
         raise SystemExit("hwpx 파일이 없습니다: " + folder)
     print(f"{len(files)}개 파일 처리 → {out_dir}")
