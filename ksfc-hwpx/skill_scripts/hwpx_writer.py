@@ -333,6 +333,40 @@ def fit(p, stats):
                 break
 
 
+def fit_single_lines(p, stats):
+    """제목·소제목: 한 줄로 쓴 줄(강제 줄바꿈 사이)이 조금 넘치면 자간(-10% 한도)으로 한 줄에 맞춤.
+    그래도 넘치면 장평을 95%·90%까지 줄임(원본 제목에서 쓰는 방식)."""
+    width = p.width - p.ps.left - p.ps.right
+    segs, cur = [], []
+    for cs, t in p.runs:
+        if cs == "obj":
+            continue
+        for ch in t:
+            if ch == "\n":
+                segs.append(cur); cur = []
+            else:
+                cur.append((cs, ch))
+        # 조각 끝
+    segs.append(cur)
+
+    def over(delta, ratio):
+        # HY 글꼴 폭은 근사값이라 2% 여유
+        return max(sum(cs.copy(ratio=min(cs.ratio, ratio)).adv(ch, delta) for cs, ch in sg) for sg in segs if sg) > width * 0.98
+
+    if not any(segs) or not over(0, 100):
+        return
+    for ratio in (100, 95, 90):
+        for d in range(0, MAX_TIGHT - 1, -1):
+            if not over(d, ratio):
+                p.delta = d
+                if ratio < 100:
+                    for r in p.runs:
+                        if r[0] != "obj":
+                            r[0] = r[0].copy(ratio=min(r[0].ratio, ratio))
+                stats["tight"] += 1
+                return
+
+
 # ───────────────────────── IR → 문단 ─────────────────────────
 WIDE_MARK_EM = 1.04   # 한글이 전각 기호(□ ㅇ ➊ ① ※ ◈ ■ ▶ 등)를 그리는 폭 — 원본 내어쓰기 역산값
 
@@ -536,7 +570,7 @@ class Writer:
         min_h = {"title": 3079, "band": 3300, "sub": 2600}[kind]
         ps = PS(align=align, ls_type="PERCENT", ls_val=100, keep_next=True)
         inner = Para(ps, runs, tw - 2 * pad_lr)
-        fit(inner, self.stats)
+        fit_single_lines(inner, self.stats)
         cell = self.para_xml(inner)
         self.oid += 1
         tbl = (f'<hp:tbl id="{self.oid}" zOrder="{self.oid - 1000}" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" '
