@@ -42,6 +42,9 @@ PAGE = dict(top=round(10 * MM), header=round(10 * MM), bottom=round(10 * MM), fo
 BODY_W = PAGE_W - PAGE["left"] - PAGE["right"]
 # docx용 색(쪽 이미지 픽셀 실측) → 원본 설정값
 COLOR_MAP = {"DCF6DD": "D8FFD8", "FCF6CC": "FFF7CC", "FEF7CD": "FFF7CC"}
+# 쪽 맞춤 단계(스킬 순서: 자간 → 간격 → 줄간격). 구간(쪽 나누기 사이)의 마지막 쪽이 거의 비면 한 단계씩 올림
+FIT_LEVELS = [dict(sp=1.0, ls=None), dict(sp=0.9, ls=None), dict(sp=0.8, ls=None), dict(sp=0.9, ls=150), dict(sp=0.8, ls=150), dict(sp=0.7, ls=150)]
+PULL_FILL = 0.5              # 마지막 줄이 한 줄의 50% 이하면 자간(-10% 한도)으로 끌어올림(스킬 기존 규칙)
 LOOSE_EM = 0.5               # 양쪽 정렬로 띄어쓰기가 이만큼(em) 넘게 벌어지면 보정
 MAX_TIGHT = -10              # 자간 보정 한도(%)
 SKELETON = None
@@ -321,7 +324,7 @@ def fit(p, stats):
     # 마지막 줄에 짧은 조각만 남으면 끌어올리기(원본 관행: 자간을 줄여 한 줄 줄임)
     worst, starts, used = _loosest(p, p.delta, "word")
     fw, rw = p.widths()
-    if len(starts) >= 2 and used[-1] < 0.12 * rw:
+    if len(starts) >= 2 and used[-1] <= PULL_FILL * rw:
         for d in range(p.delta - 1, lo - 1, -1):
             w2, s2, _ = _loosest(p, d, "word")
             if len(s2) < len(starts) and w2 <= LOOSE_EM:
@@ -331,12 +334,27 @@ def fit(p, stats):
 
 
 # ───────────────────────── IR → 문단 ─────────────────────────
+WIDE_MARK_EM = 1.04   # 한글이 전각 기호(□ ㅇ ➊ ① ※ ◈ ■ ▶ 등)를 그리는 폭 — 원본 내어쓰기 역산값
+
+
+def prefix_width(cs, prefix):
+    """앞 공백 + 기호 + 공백의 폭(= 내어쓰기, 한글에서 Shift+Tab으로 잡는 위치)."""
+    tot = 0.0
+    for c in prefix:
+        if c != " " and HM._wide(c):
+            tot += WIDE_MARK_EM * cs.pt * 100 * cs.ratio / 100 * (1 + cs.spacing / 100)
+        else:
+            tot += cs.adv(c)
+    return round(tot)
+
 MARKER_RE = re.compile(r"^([□ㅇ\-·∙•■▪‣▶◆◈◇○●◎▷►※➡⇨⇒☞]|\*\*|\*|\d\)|[➊-➓①-⑳❶-❿])$")
 
 
 class Writer:
-    def __init__(self, ir, skel):
+    def __init__(self, ir, skel, levels=None):
         self.ir, self.skel = ir, skel
+        self.levels = levels or {}   # 구간 번호 → FIT_LEVELS 단계
+        self.block = 0
         self.st = Styles(skel("Contents/header.xml"))
         self.stats = {"tight": 0, "charwrap": 0, "pullup": 0, "paras": 0, "tables": 0, "images": 0}
         self.bins = []            # (id, ext, bytes)
@@ -347,7 +365,7 @@ class Writer:
     def cs_of(self, r):
         f = (r.get("font") or {}).get("name") or "나눔명조"
         size = (r.get("size") or 30) / 2
-        cs = CS(face=f, pt=size, bold=bool(r.get("bold")), color=color(r.get("color")),
+        cs = CS(face=f, pt=size, bold=bool(r.get("bold")) and not f.startswith("HY"), color=color(r.get("color")),
                 shade=color(r["shading"]["fill"]) if r.get("shading") and r["shading"].get("fill") not in (None, "auto") else None,
                 ratio=int(r.get("scale") or 100), underline=bool(r.get("underline") is not None and r.get("underline") is not False),
                 strike=bool(r.get("strike")), sup=bool(r.get("superScript")))
@@ -393,8 +411,12 @@ class Writer:
                 out.append([cs, t])
         return out
 
+    def lv(self):
+        return FIT_LEVELS[self.levels.get(self.block, 0)]
+
     def spacer(self, gap_pt, width, keep_next=False, page_break=False, face="나눔명조"):
         """간격용 빈 줄: 원본처럼 작은 글자 + 160% (10pt 빈 줄 = 16pt 간격)."""
+        gap_pt *= self.lv()["sp"]
         if gap_pt < 3:
             ps = PS(align="LEFT", ls_type="FIXED", ls_val=max(100, round(gap_pt * 100)), keep_next=keep_next)
             cs = CS(face=face, pt=max(1.0, gap_pt))
@@ -431,6 +453,8 @@ class Writer:
         max_pt = max(cs.pt for cs, _ in text_runs) if text_runs else 15
         if line and rule == "exact":
             ls_type, ls_val = "PERCENT", round(int(line) / 20 / max_pt * 100)
+            if self.lv()["ls"] and ls_val >= 155 and align == "JUSTIFY":   # 쪽 맞춤: 본문 160% → 150%(원본 38%가 150%)
+                ls_val = self.lv()["ls"]
         elif line and rule == "atLeast":
             ls_type, ls_val = "AT_LEAST", int(line) * TW
         elif line:
@@ -452,7 +476,7 @@ class Writer:
             hints = [h + nsp + 1 for h in hints]
             prefix = " " * nsp + mk + " "
             ps.left = 0
-            ps.intent = -round(sum(cs0.adv(c) for c in prefix))
+            ps.intent = -prefix_width(cs0, prefix)
         elif hanging > 0:
             # 탭 없는 내어쓰기(표 셀 목록 등): 첫 글자 기호 + 공백까지를 내어쓰기로
             txt = "".join(t for cs, t in runs if cs != "obj")
@@ -464,7 +488,7 @@ class Writer:
                 hints = [h + nsp for h in hints]
             ps.left = 0
             prefix = " " * nsp + (m.group(1) if m else "")
-            ps.intent = -round(sum(cs0.adv(c) for c in prefix)) if m else -hanging * TW
+            ps.intent = -prefix_width(cs0, prefix) if m else -hanging * TW
         else:
             ps.left = max(0, left) * TW
             ps.intent = (ind.get("firstLine") or 0) * TW
@@ -489,6 +513,53 @@ class Writer:
         out.append(para)
         if after >= 1:
             out.append(self.spacer(after, width, keep_next, False, face0))
+        return out
+
+    # ── 제목 띠·소제목: 원본처럼 1칸 표 + 세로 가운데 ──
+    def band_para(self, p, width):
+        kind = p.get("_band")
+        runs, _ = self.runs_of(p.get("children") or [], width)
+        runs = [[cs, t.lstrip(" ") if i == 0 else t] for i, (cs, t) in enumerate(runs) if cs != "obj"]
+        pb, sh = p.get("border") or {}, p.get("shading")
+        sides = {s: border_of(pb.get(s)) for s in ("left", "right", "top", "bottom")}
+        fill = color(sh["fill"]) if sh and sh.get("fill") not in (None, "auto") else None
+        bf = self.st.border_fill(sides, fill)
+        align = {"center": "CENTER", "right": "RIGHT"}.get(p.get("alignment"), "LEFT")
+        pad_lr, pad_tb = 510, 141
+        line_w = sum(cs.adv(ch) for cs, t in runs for ch in t if ch != "\n")
+        if kind == "sub":
+            tw = min(width, round(line_w + 2 * pad_lr + 4 * MM))
+        elif kind == "band":
+            tw = round(width * 0.88)
+        else:
+            tw = width
+        min_h = {"title": 3079, "band": 3300, "sub": 2600}[kind]
+        ps = PS(align=align, ls_type="PERCENT", ls_val=100, keep_next=True)
+        inner = Para(ps, runs, tw - 2 * pad_lr)
+        fit(inner, self.stats)
+        cell = self.para_xml(inner)
+        self.oid += 1
+        tbl = (f'<hp:tbl id="{self.oid}" zOrder="{self.oid - 1000}" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" '
+               f'lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="1" colCnt="1" cellSpacing="0" '
+               f'borderFillIDRef="{self.st.none_bf()}" noAdjust="0"><hp:sz width="{tw}" widthRelTo="ABSOLUTE" height="{min_h}" heightRelTo="ABSOLUTE" protect="0"/>'
+               '<hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" '
+               'horzRelTo="PARA" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>'
+               f'<hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:inMargin left="{pad_lr}" right="{pad_lr}" top="{pad_tb}" bottom="{pad_tb}"/>'
+               f'<hp:tr><hp:tc name="" header="0" hasMargin="1" protect="0" editable="0" dirty="0" borderFillIDRef="{bf}">'
+               '<hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" '
+               f'textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">{cell}</hp:subList><hp:cellAddr colAddr="0" rowAddr="0"/>'
+               f'<hp:cellSpan colSpan="1" rowSpan="1"/><hp:cellSz width="{tw}" height="{min_h}"/>'
+               f'<hp:cellMargin left="{pad_lr}" right="{pad_lr}" top="{pad_tb}" bottom="{pad_tb}"/></hp:tc></hp:tr></hp:tbl>')
+        host = Para(PS(align="LEFT", ls_type="PERCENT", ls_val=100, keep_next=True), [[CS(pt=1.0), ""], ("obj", tbl)], width,
+                    bool(p.get("pageBreakBefore")))
+        sp = p.get("spacing") or {}
+        out = []
+        if (sp.get("before") or 0) >= 20:
+            out.append(self.spacer(sp["before"] / 20, width, True, host.page_break))
+            host.page_break = False
+        out.append(host)
+        if (sp.get("after") or 0) >= 20:
+            out.append(self.spacer(sp["after"] / 20, width, True))
         return out
 
     # ── 표 ──
@@ -543,6 +614,9 @@ class Writer:
             bf = self.st.border_fill(sides, fill)
             mg = tc.get("margins") or {}
             m = {s: int(mg.get(s, 108 if s in ("left", "right") else 0)) * TW for s in ("left", "right", "top", "bottom")}
+            if tc.get("_md"):
+                m["left"] = m["right"] = 510
+                m["top"] = m["bottom"] = max(141, m["top"])
             va = {"center": "CENTER", "bottom": "BOTTOM"}.get(tc.get("verticalAlign"), "TOP")
             w = sum(cols[ci:ci + cell["span"]])
             inner_w = w - m["left"] - m["right"]
@@ -596,6 +670,9 @@ class Writer:
         w, h = int(tr.get("width", 400)) * 75, int(tr.get("height", 300)) * 75     # px(96dpi) → HWPUNIT
         if w > width:
             h, w = round(h * width / w), width
+        cap = round((PAGE_H - sum(PAGE[k] for k in ("top", "bottom", "header", "footer"))) * 0.85)
+        if h > cap:
+            w, h = round(w * cap / h), cap
         self.oid += 1
         return (f'<hp:pic id="{self.oid}" zOrder="{self.oid - 1000}" numberingType="PICTURE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" '
                 f'lock="0" dropcapstyle="None" href="" groupLevel="0" instid="{self.oid}" reverse="0">'
@@ -613,24 +690,27 @@ class Writer:
                 '<hp:outMargin left="0" right="0" top="0" bottom="0"/><hp:shapeComment>그림입니다.</hp:shapeComment></hp:pic>')
 
     # ── 블록 ──
-    def blocks(self, children, width):
+    def blocks(self, children, width, clean=True):
         out = []
         for c in children:
-            if c["type"] == "p":
+            if c["type"] == "p" and c.get("_band"):
+                out += self.band_para(c, width)
+            elif c["type"] == "p":
                 out += self.convert_p(c, width)
             elif c["type"] == "tbl":
                 out.append(self.table_para(c, width))
         # 쪽 나누기 바로 뒤의 간격용 빈 줄은 없앰: 원본은 새 쪽이 제목·표로 바로 시작
-        cleaned, carry = [], False
-        for p in out:
-            is_space = not p.text().strip() and not any(cs == "obj" for cs, _ in p.runs)
-            if (p.page_break or carry) and is_space:
-                carry = True
-                continue
-            if carry:
-                p.page_break, carry = True, False
-            cleaned.append(p)
-        out = cleaned
+        if clean:
+            cleaned, carry = [], False
+            for p in out:
+                is_space = not p.text().strip() and not any(cs == "obj" for cs, _ in p.runs)
+                if (p.page_break or carry) and is_space:
+                    carry = True
+                    continue
+                if carry:
+                    p.page_break, carry = True, False
+                cleaned.append(p)
+            out = cleaned
         for p in out:
             fit(p, self.stats)
         self.stats["paras"] += len(out)
@@ -697,7 +777,22 @@ class Writer:
 
     def build(self):
         sec = self.ir["sections"][0]
-        paras = self.blocks(sec.get("children") or [], BODY_W)
+        paras = []
+        for c in sec.get("children") or []:
+            if c.get("pageBreakBefore") and paras:
+                self.block += 1
+            paras += self.blocks([c], BODY_W, clean=False)
+        # 쪽 나누기 뒤 빈 줄 정리(구간 경계를 넘어서도)
+        cleaned, carry = [], False
+        for p in paras:
+            is_space = not p.text().strip() and not any(cs == "obj" for cs, _ in p.runs)
+            if (p.page_break or carry) and is_space and cleaned:
+                carry = True
+                continue
+            if carry:
+                p.page_break, carry = True, False
+            cleaned.append(p)
+        paras = cleaned
         head = self.header_ctrl()
         body = []
         for i, p in enumerate(paras):
@@ -713,11 +808,47 @@ def skeleton():
     return z.read
 
 
+def _render(ir, skel, levels):
+    w = Writer(ir, skel, levels)
+    section, header, text = w.build()
+    return w, section, header, text
+
+
 def write(ir_path, out_path, title=None):
     ir = json.load(open(ir_path, encoding="utf-8"))
     skel = skeleton()
-    w = Writer(ir, skel)
-    section, header, text = w.build()
+    levels = {}
+    w, section, header, text = _render(ir, skel, levels)
+    # 자동 쪽 맞춤: 구간의 마지막 쪽이 25% 미만으로 조금 넘치면 그 구간만 단계적으로 압축
+    import hwpx_layout as HL
+    for _ in range(len(FIT_LEVELS) * 3):
+        tmp = io.BytesIO()
+        _pack(tmp, skel, w, section, header, text, title)
+        fills = HL.Doc(tmp).page_fill()
+        changed = False
+        for b, pages in enumerate(fills):
+            if len(pages) > 1 and pages[-1] < 0.25 and levels.get(b, 0) < len(FIT_LEVELS) - 1:
+                levels[b] = levels.get(b, 0) + 1
+                changed = True
+        if not changed:
+            break
+        w, section, header, text = _render(ir, skel, levels)
+    # 압축해도 쪽이 줄지 않은 구간은 원래대로
+    tmp = io.BytesIO(); _pack(tmp, skel, w, section, header, text, title)
+    final = HL.Doc(tmp).page_fill()
+    base_w, bs, bh, bt = _render(ir, skel, {})
+    tmp2 = io.BytesIO(); _pack(tmp2, skel, base_w, bs, bh, bt, title)
+    base = HL.Doc(tmp2).page_fill()
+    keep = {b: lv for b, lv in levels.items() if b < len(final) and b < len(base) and len(final[b]) < len(base[b])}
+    if keep != levels:
+        levels = keep
+        w, section, header, text = _render(ir, skel, levels)
+    w.stats["fit_levels"] = levels
+    _pack(out_path, skel, w, section, header, text, title)
+    return w.stats
+
+
+def _pack(out_path, skel, w, section, header, text, title=None):
     hpf = skel("Contents/content.hpf").decode()
     if title is None:
         title = next((t for t in text.split("\r\n") if t.strip()), "")
@@ -737,7 +868,6 @@ def write(ir_path, out_path, title=None):
         for name, data in files:
             comp = zipfile.ZIP_STORED if name in ("mimetype",) or name.startswith("BinData/") else zipfile.ZIP_DEFLATED
             z.writestr(zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), data, compress_type=comp)
-    return w.stats
 
 
 if __name__ == "__main__":
@@ -745,4 +875,6 @@ if __name__ == "__main__":
     stats = write(ir_path, out)
     if "--rm-ir" in sys.argv:
         os.remove(ir_path)
-    print("written:", out, "| 줄 맞춤: 자간 %(tight)d · 끌어올림 %(pullup)d · 글자 단위 %(charwrap)d | 표 %(tables)d · 그림 %(images)d" % stats)
+    lv = stats.pop("fit_levels")
+    fitmsg = (" | 쪽 맞춤: " + ", ".join(f"구간{b + 1} 간격×{FIT_LEVELS[l]['sp']}" + (f"·줄간격 {FIT_LEVELS[l]['ls']}%" if FIT_LEVELS[l]['ls'] else "") for b, l in sorted(lv.items()))) if lv else ""
+    print("written:", out, "| 줄 맞춤: 자간 %(tight)d · 끌어올림 %(pullup)d · 글자 단위 %(charwrap)d | 표 %(tables)d · 그림 %(images)d" % stats + fitmsg)

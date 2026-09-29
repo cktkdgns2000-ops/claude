@@ -512,7 +512,7 @@ function titleBand(text) {
   const kids = parts.flatMap((t, k) => { const lp = lineParts(t.trim()); const [tt, csX] = fitLine(lp.t, CONFIG.fonts.title, CONTENT_W() / 20 - 12, { forcedTw: lp.forcedTw, shrink: 0 });
     return [...(k ? [new TextRun({ break: 1 })] : []), ...inline(tt, CONFIG.fonts.title, { bold: true, ...csX })]; });
   return new Paragraph({
-    ...pb(), children: kids,
+    ...pb(), children: kids, _band: "title",
     alignment: AlignmentType.CENTER,
     shading: shade(CONFIG.colors.titleFill),
     border: {
@@ -564,7 +564,7 @@ function plainHeader(text) {
 function bandHeader(text) {
   const hf = { ...CONFIG.fonts.title, size: 20 };
   return [new Paragraph({
-    ...pb(), keepNext: true,
+    ...pb(), keepNext: true, _band: "band",
     indent: { left: 0, right: Math.round(CONTENT_W() * 0.12) },
     shading: shade(CONFIG.colors.titleFill),
     border: { top: border(CONFIG.colors.titleLine, 12), left: noBorder, bottom: border(CONFIG.colors.titleLine, 12), right: noBorder },
@@ -600,7 +600,7 @@ function subHeader(text) {
   const estW = Math.min(CONTENT_W(), Math.round(estWidthPt(text, f.size) * 20 + 10 * MM));
   const b = tint ? { bottom: border("7FB8B8", 6) } : allBorders({ ...border("404040", 6), space: 2 });
   return [new Paragraph({
-    ...pb(), keepNext: true,
+    ...pb(), keepNext: true, _band: "sub",
     indent: { left: 0, right: Math.max(0, CONTENT_W() - estW) },
     border: b, shading: shade(tint ? CONFIG.colors.tintFill : CONFIG.colors.subhdrFill),
     spacing: { before: mmSp(Math.max(8, CONFIG.spacing.group - 1)), after: mmSp(4), ...lineOf(26) },   // 소제목 앞 간격은 @spacing을 따름
@@ -810,7 +810,7 @@ function mdTable(rows, fontSize, { inBox = false, kv = false, headerRows = 1, fi
   const mins = Array.from({ length: ncol }, (_, i) => Math.max(3, ...cellTexts(i).flatMap(x => x.split(/<br>|\s+/)).map(tok => Math.min(12, estWidthPt(tok, 10) / 10))));
   const total = Math.round(CONTENT_W() - (inBox ? 300 : 0) - indentMm * MM);
   const fs = (fontSize || CONFIG.fonts.table.size);
-  const minW = mins.map(m => Math.round(m * fs * 20 + 160));       // 글자폭(em→pt→twips) + 셀 여백
+  const minW = mins.map(m => Math.round(m * fs * 20 + 230));       // 글자폭(em→pt→twips) + 셀 여백(hwpx: 좌우 1.8mm)
   // 셀 안 그림 {w=mm}은 그 폭을 최소 폭으로 보장
   raw.forEach(r => r.forEach((t, i) => { const m = t.match(/!\[[^\]]*\]\([^)]*\)\{w=([\d.]+)\}/); if (m) minW[i] = Math.max(minW[i], Math.round((parseFloat(m[1]) + 4) * MM)); }));
   let rest = total - minW.reduce((a, b) => a + b, 0);
@@ -886,6 +886,7 @@ function mdTable(rows, fontSize, { inBox = false, kv = false, headerRows = 1, fi
     const fill = cellBg || (isHeader || isLabel ? hdrFill : (ro.fill || undefined));
     const extra = { bold: isHeader || isLabel || ro.bold || !!cellBg, ...(cellFg ? { color: cellFg } : (ro.blue ? { color: CONFIG.colors.blue } : {})), shrinkParens: 2 };
     return new TableCell({
+      _md: true, _tight: tight,
       width: { size: w, type: WidthType.DXA }, borders: bd, columnSpan: span > 1 ? span : undefined,
       verticalMerge: vmerge, shading: fill ? shade(fill) : undefined,
       verticalAlign: VerticalAlign.CENTER, margins: { top: tight ? 10 : (roomy ? 90 : 45), bottom: tight ? 10 : (roomy ? 90 : 45), left: ncol >= 8 ? 20 : 50, right: ncol >= 8 ? 20 : 50 },  // 점선(밀집) 표 13.5pt 행, 일반 표는 여유 있게

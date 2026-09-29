@@ -167,10 +167,12 @@ class Doc:
                     im = tbl.find(f"{HP}inMargin")
                     m = {a: int(im.get(a)) for a in ("left", "right", "top", "bottom")}
                 cw = int(tc.find(f"{HP}cellSz").get("width")) - m["left"] - m["right"]
-                inner = 0
+                inner, last_extra = 0, 0
                 for p in tc.find(f"{HP}subList").findall(f"{HP}p"):
                     ls, pr = self.para_lines(p, cw)
-                    inner += pr["prev"] + pr["next"] + sum(l[0] for l in ls[:-1]) + (ls[-1][0] if ls else 0)
+                    inner += pr["prev"] + pr["next"] + sum(l[0] for l in ls)
+                    last_extra = (ls[-1][0] - ls[-1][1]) if ls else 0
+                inner -= last_extra      # 셀 안 마지막 줄의 줄간격 여분은 셀 높이에 넣지 않음(한글 저장본 확인)
                 stored = int(tc.find(f"{HP}cellSz").get("height"))
                 stored = stored if 0 < stored < 84188 else 0    # 비정상 저장값(음수가 부호 없이 저장된 경우 등) 무시
                 h = max(stored, inner + m["top"] + m["bottom"])
@@ -219,6 +221,30 @@ class Doc:
                 y += it["pr"]["next"]
         return [p or "(빈 쪽)" for p in pages]
 
+    def page_fill(self):
+        """쪽 나누기 구간별 [쪽마다 사용 높이/본문 높이]"""
+        blocks = []
+        for sec, W, H in self.sections:
+            y, cur = 0.0, None
+            for p in sec.findall(f"{HP}p"):
+                lines, pr = self.para_lines(p, W)
+                text = "".join("".join(t.itertext()) for t in p.iter(f"{HP}t"))
+                if p.get("pageBreak") == "1" or cur is None:
+                    if cur is not None:
+                        cur[-1] = y / H
+                    cur = [0.0]; blocks.append(cur); y = 0.0
+                if pr["keep_lines"] or (not text.strip() and any(l[1] > 0 for l in lines)):
+                    tot = sum(l[0] for l in lines[:-1]) + lines[-1][1]
+                    if y > 0 and y + tot > H:
+                        cur[-1] = y / H; cur.append(0.0); y = 0.0
+                for (pitch, th, pos) in lines:
+                    if y > 0 and y + th > H:
+                        cur[-1] = y / H; cur.append(0.0); y = 0.0
+                    y += pitch
+            if cur is not None:
+                cur[-1] = y / H
+        return blocks
+
     def actual_pages(self):
         """한글이 저장한 줄 배치 기록으로 실제 쪽 경계(쪽별 첫 줄)."""
         pages = []
@@ -228,7 +254,8 @@ class Doc:
                 text = "".join("".join(t.itertext()) for t in p.iter(f"{HP}t"))
                 for s in p.findall(f"{HP}linesegarray/{HP}lineseg"):
                     v = int(s.get("vertpos"))
-                    if last is None or v < last:
+                    first_seg = s is p.find(f"{HP}linesegarray/{HP}lineseg")
+                    if last is None or v < last or (first_seg and p.get("pageBreak") == "1"):
                         pages.append(None)
                     if pages[-1] is None and text.strip():
                         tp = int(s.get("textpos"))
