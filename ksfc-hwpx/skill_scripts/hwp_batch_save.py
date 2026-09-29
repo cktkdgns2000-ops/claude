@@ -15,8 +15,30 @@
 import glob
 import os
 import sys
+import time
+import zipfile
 
 FOLDER = r"C:\Users\ksfc\Desktop\다운로드\일괄저장"
+
+
+def has_layout(path):
+    """저장본에 한글 줄 배치 기록(lineseg)이 들어갔는지"""
+    try:
+        with zipfile.ZipFile(path) as z:
+            return any(b"<hp:lineseg " in z.read(n) for n in z.namelist() if n.startswith("Contents/section"))
+    except Exception:
+        return False
+
+
+def layout_all(hwp):
+    """문서 끝까지 이동하고 쪽 수를 읽어 한글이 전체 쪽 배치를 계산하게 함(열자마자 저장하면 배치 기록이 빠짐)"""
+    hwp.HAction.Run("MoveDocEnd")
+    try:
+        hwp.KeyIndicator()          # 현재 쪽 번호 계산 → 끝까지 배치
+    except Exception:
+        pass
+    _ = hwp.PageCount
+    hwp.HAction.Run("MoveDocBegin")
 
 
 def main(folder):
@@ -43,7 +65,14 @@ def main(folder):
         try:
             if not hwp.Open(src, "HWPX", "forceopen:true"):
                 raise RuntimeError("열기 실패")
-            hwp.SaveAs(dst, "HWPX", "")
+            for attempt in range(4):
+                layout_all(hwp)
+                time.sleep(0.5 + attempt)
+                hwp.SaveAs(dst, "HWPX", "")
+                if has_layout(dst):
+                    break
+            else:
+                raise RuntimeError("줄 배치 기록 없이 저장됨")
             hwp.Clear(1)   # 저장하지 않고 닫기(이미 저장함)
             print(f"  [{i}/{len(files)}] {os.path.basename(src)}")
         except Exception as e:
