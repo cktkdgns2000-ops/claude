@@ -264,74 +264,83 @@ class Para:
 
 
 # ───────────────────────── 줄 맞춤(작성자 결정 규칙) ─────────────────────────
-def _loosest(p, delta, mode):
+FIT_MARGIN = 0.01            # 자간으로 끌어올릴 때 남기는 줄 폭 여유(1%) — 폭 추정 오차로 마지막 어절이 다시 넘어가지 않게
+
+
+def _loosest(p, delta, mode, margin=0.0):
     fw, rw = p.widths()
+    fw, rw = fw * (1 - margin), rw * (1 - margin)
     ch = p.chars(delta)
     starts, used, gaps = HM.layout(ch, fw, rw, mode)
     em = max(cs.pt for cs, t in p.runs if cs != "obj" and t.strip()) * 100
     worst = 0.0
     for i in range(len(used) - 1):        # 마지막 줄은 양쪽 정렬 대상이 아님
-        w = fw if i == 0 else rw
+        w = (fw if i == 0 else rw) / (1 - margin)
         worst = max(worst, (w - used[i]) / max(1, gaps[i]) / em)
     return worst, starts, used
 
 
 def _awkward_splits(p, starts):
+    """어절 중간 줄 바뀜 중 자연스러운 경계(복합어 사이·가운뎃점 뒤 등, build_hwpx.js가 표시한 자리)가 아닌 것의 수."""
     t = p.text()
     bad = 0
     for s in starts[1:]:
-        if 0 < s < len(t) and re.match("[가-힣]", t[s - 1]) and re.match("[가-힣]", t[s]):
-            if s in p.hints:
-                continue
-            a = s
-            while a > 0 and re.match("[가-힣]", t[a - 1]):
-                a -= 1
-            b = s
-            while b < len(t) and re.match("[가-힣]", t[b]):
-                b += 1
-            bad += 1 if (s - a < 2 or b - s < 2) else 0.5   # 한 글자만 떼어 내는 분리는 가장 나쁨
+        if 0 < s < len(t) and t[s - 1] != " " and t[s] != " ":
+            if s not in p.hints:
+                bad += 1
     return bad
 
 
 def fit(p, stats):
-    """어절 단위 기본 → 벌어지면 자간 → 그래도 안 되면 그 문단만 글자 단위 + 자간 보정."""
+    """어절 단위가 원칙(작성자 결정). 띄어쓰기가 0.5em 넘게 벌어지는 줄이 생기면 자간(-10% 한도)으로 다음 어절을 끌어올리고,
+    그래도 안 되면 자연스러운 경계에서만 글자 단위로 나눔(없으면 어절 단위 유지). 끌어올릴 때는 줄 폭 1% 여유를 남김."""
     if p.ps.align != "JUSTIFY" or not p.text().strip() or any(cs == "obj" for cs, _ in p.runs) or "\t" in p.text():
         return
     base_sp = min(cs.spacing for cs, t in p.runs if cs != "obj" and t.strip())
     lo = min(0, MAX_TIGHT - min(0, base_sp))   # 자간 합계가 -10%를 넘지 않게(직접 지정한 {tight}는 존중)
+    p.delta, p.ps.charwrap = 0, False
     worst, starts, used = _loosest(p, 0, "word")
     if len(starts) < 2:
         return
     if worst > LOOSE_EM:
+        best = None
         for d in range(-1, lo - 1, -1):
-            w2, s2, _ = _loosest(p, d, "word")
+            w2, s2, _ = _loosest(p, d, "word", FIT_MARGIN)
             if w2 <= LOOSE_EM:
-                p.delta = d
-                stats["tight"] += 1
+                best = d
                 break
+        if best is not None:
+            p.delta = best
+            stats["tight"] += 1
         else:
-            p.ps.charwrap = True
-            best = None
-            for d in sorted(range(lo, 4), key=abs):
-                _, s2, _ = _loosest(p, d, "char")
-                score = (_awkward_splits(p, s2), abs(d))
-                if best is None or score < best[0]:
-                    best = (score, d)
-                if score[0] == 0:
-                    break
-            p.delta = best[1]
-            stats["charwrap"] += 1
-            return
-    # 마지막 줄에 짧은 조각만 남으면 끌어올리기(원본 관행: 자간을 줄여 한 줄 줄임)
+            # 자연스러운 경계에서만 글자 단위 허용
+            for d in sorted(range(lo, 1), key=abs):
+                w2, s2, _ = _loosest(p, d, "char", FIT_MARGIN)
+                if _awkward_splits(p, s2) == 0 and len(s2) > 1 and s2 != _loosest(p, d, "word", FIT_MARGIN)[1]:
+                    p.ps.charwrap, p.delta = True, d
+                    stats["charwrap"] += 1
+                    return
+            # 없으면 어절 단위 유지, 벌어짐이 가장 작은 자간
+            cands = [(_loosest(p, d, "word", FIT_MARGIN)[0], -d, d) for d in range(0, lo - 1, -1)]
+            p.delta = min(cands)[2]
+            if p.delta:
+                stats["tight"] += 1
+    # 마지막 줄에 짧은 조각만 남으면 끌어올리기(원본 관행: 자간을 줄여 한 줄 줄임), 1% 여유 확보
     worst, starts, used = _loosest(p, p.delta, "word")
     fw, rw = p.widths()
     if len(starts) >= 2 and used[-1] <= PULL_FILL * rw:
         for d in range(p.delta - 1, lo - 1, -1):
-            w2, s2, _ = _loosest(p, d, "word")
+            w2, s2, _ = _loosest(p, d, "word", FIT_MARGIN)
             if len(s2) < len(starts) and w2 <= LOOSE_EM:
                 p.delta = d
                 stats["pullup"] += 1
                 break
+    # 자간으로 맞춘 결과가 여유 없이 딱 맞으면(폭 오차로 넘칠 위험) 여유가 생기는 쪽으로 한 단계 더
+    if p.delta:
+        _, s_m, _ = _loosest(p, p.delta, "word", FIT_MARGIN)
+        _, s_0, _ = _loosest(p, p.delta, "word")
+        if s_m != s_0 and p.delta - 1 >= lo:
+            p.delta -= 1
 
 
 def fit_single_lines(p, stats):
