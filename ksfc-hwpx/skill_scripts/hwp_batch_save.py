@@ -8,12 +8,14 @@
        (처음 실행하는 PC면 필요한 pywin32를 스스로 설치한다. 오류가 나도 창이 닫히지 않고 이유를 보여준다)
     2) → 이 파일이 있는 폴더의 *.hwpx를 하나씩 열어 같은 폴더의 '한글저장' 폴더에 같은 이름으로 저장한다.
          (이전에 만든 '한글저장' 폴더가 있어도 같은 이름 파일은 덮어쓴다)
+       같은 이름의 .json(빠른 내어쓰기 보정 목록)이 있는 파일은 저장 전에 문단마다 빠른 내어쓰기(Shift+Tab)를 실행한다.
     3) '한글저장' 폴더를 zip으로 묶어 올려주면 된다.
     다른 폴더를 처리하려면:  python hwp_batch_save.py <폴더 경로>
 
 처음 실행 시 한글이 파일 접근 허용 여부를 물으면 '모두 허용'을 누른다.
 """
 import glob
+import json
 import os
 import subprocess
 import sys
@@ -72,6 +74,23 @@ def open_hwp(win32):
     raise SystemExit(f"한글을 실행하지 못했습니다(한글이 설치되어 있는지 확인): {last}")
 
 
+def apply_indent(hwp, src):
+    """같은 이름의 .json(빠른 내어쓰기 보정 목록: para·caret)이 있으면 문단마다 Shift+Tab(ParagraphShapeIndentAtCaret) 실행"""
+    js = os.path.splitext(src)[0] + ".json"
+    if not os.path.exists(js):
+        return 0
+    rows = json.load(open(js, encoding="utf-8"))
+    if not (isinstance(rows, list) and rows and "caret" in rows[0]):
+        return 0
+    done = 0
+    for r in rows:
+        # SetPos(목록, 문단 번호, 글자 위치): 본문 목록 0, 기호 뒤(= Shift+Tab을 누를 위치)에 커서
+        if hwp.SetPos(0, r["para"], r["caret"]):
+            hwp.HAction.Run("ParagraphShapeIndentAtCaret")
+            done += 1
+    return done
+
+
 def main(folder):
     win32 = load_win32()
 
@@ -95,6 +114,9 @@ def main(folder):
         try:
             if not hwp.Open(src, "HWPX", "forceopen:true"):
                 raise RuntimeError("열기 실패")
+            n_indent = apply_indent(hwp, src)
+            if n_indent:
+                print(f"      빠른 내어쓰기 {n_indent}문단 실행")
             for attempt in range(4):
                 layout_all(hwp)
                 time.sleep(0.5 + attempt)

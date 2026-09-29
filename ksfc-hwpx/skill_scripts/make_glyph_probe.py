@@ -16,8 +16,10 @@ import hwpx_writer as W  # noqa: E402
 
 FACES = [("나눔명조", False), ("나눔명조", True), ("나눔고딕", False), ("나눔고딕", True),
          ("HY울릉도M", False), ("HY헤드라인M", False), ("휴먼명조", False), ("맑은 고딕", False)]
-CHARS = ("가" "∙＝ㆍ·※➊➋❶①②◈◇□■▶⇨➡⇒‣-*()[]「」‘’“”,.:;%~/+&<>▪•"
-         "美日他旣現全中內韓" "0123456789" "ABCDEGHKMNOPRSTUXYZ" "abcdeghilmnorstuxy")
+_ASCII = "".join(chr(c) for c in range(0x21, 0x7F))
+_EXTRA = ("가ㅇㆍ∙＝·※➊➋❶①②③◈◇□■▶▷►▸▹◆○●◎☞⇨➡⇒→➔‣‧・･｢｣「」『』‘’“”▪•…～±×÷°℃"
+          "➀➁➂" "美日他旣現全中內韓社前有月高錢舊對相計先令新可完")
+CHARS = "".join(dict.fromkeys(_ASCII + _EXTRA))   # 중복 제거, 순서 유지
 SIZES = (6, 10)
 N = 1200   # 반복 상한
 
